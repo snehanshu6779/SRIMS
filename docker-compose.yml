@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-srims_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-srims}
+      MYSQL_USER: ${MYSQL_USER:-srims_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-srims_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-srims_root_password}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      args:
+        DATABASE_URL: mysql://${MYSQL_USER:-srims_user}:${MYSQL_PASSWORD:-srims_password}@mysql:3306/${MYSQL_DATABASE:-srims}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-srims_user}:${MYSQL_PASSWORD:-srims_password}@mysql:3306/${MYSQL_DATABASE:-srims}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-srims-local-dev-secret-change-in-production-7f3a9c2e}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql_data:
