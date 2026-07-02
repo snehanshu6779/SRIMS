@@ -122,6 +122,7 @@ interface AppState {
   // Auth
   currentUser: MockUser;
   setCurrentUser: (userId: string) => void;
+  setCurrentUserObject: (user: MockUser) => void;
 
   // Users (master + auth)
   allUsers: MockUser[];
@@ -204,7 +205,7 @@ interface AppState {
     deliveryDate: string;
     remarks: string;
     lines: { itemId: string; itemName: string; receivedQty: number; unitPrice: number }[];
-  }) => string; // returns GRN id
+  }) => Promise<string>; // returns GRN id
 
   // Manual Stock Outward / Adjustment
   recordManualMovement: (params: {
@@ -257,6 +258,12 @@ interface AppState {
   notifications: { id: string; message: string; isRead: boolean; link: string; createdAt: string }[];
   markNotificationRead: (id: string) => void;
   addNotification: (message: string, link: string) => void;
+
+  // DB Hydration — called once on client mount when DATABASE_URL is set.
+  // Fetches all master + transactional data from /api/init and replaces
+  // the in-memory Zustand state with live database values.
+  hydrateStore: () => Promise<void>;
+  isHydrated: boolean;
 }
 
 let grnCounter = 47;
@@ -271,6 +278,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCurrentUser: (userId: string) => {
     const user = get().allUsers.find((u) => u.id === userId);
     if (user) set({ currentUser: user });
+  },
+
+  setCurrentUserObject: (user: MockUser) => {
+    set({ currentUser: user });
   },
 
   // ─── Users (master + auth) ───
@@ -341,6 +352,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newCat: MockCategory = { ...cat, id: `cat-${Date.now()}` };
     set((s) => ({ categories: [...s.categories, newCat] }));
     get().addAuditLog("CREATE", "Category", newCat.id, `Created category ${newCat.name}`);
+
+    fetch("/api/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newCat.name, parentId: newCat.parentId, icon: newCat.icon, color: newCat.color }),
+    }).then(async (res) => {
+      if (res.ok) {
+        const created = await res.json();
+        // Replace the temp id with the real DB id
+        set((s) => ({
+          categories: s.categories.map((c) => (c.id === newCat.id ? { ...c, id: created.id } : c)),
+        }));
+      }
+    }).catch(() => {});
   },
 
   updateCategory: (id, updates) => {
@@ -348,11 +373,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       categories: s.categories.map((c) => (c.id === id ? { ...c, ...updates } : c)),
     }));
     get().addAuditLog("UPDATE", "Category", id, `Updated category`);
+
+    fetch(`/api/categories/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    }).catch(() => {});
   },
 
   deleteCategory: (id) => {
     set((s) => ({ categories: s.categories.filter((c) => c.id !== id) }));
     get().addAuditLog("DELETE", "Category", id, `Deleted category`);
+
+    fetch(`/api/categories/${id}`, { method: "DELETE" }).catch(() => {});
   },
 
   // ─── Suppliers (master) ───
@@ -362,6 +395,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newSup: MockSupplier = { ...sup, id: `sup-${Date.now()}` };
     set((s) => ({ suppliers: [...s.suppliers, newSup] }));
     get().addAuditLog("CREATE", "Supplier", newSup.id, `Created supplier ${newSup.name}`);
+
+    fetch("/api/suppliers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newSup.name, contact: newSup.contact, address: newSup.address }),
+    }).then(async (res) => {
+      if (res.ok) {
+        const created = await res.json();
+        set((s) => ({
+          suppliers: s.suppliers.map((su) => (su.id === newSup.id ? { ...su, id: created.id } : su)),
+        }));
+      }
+    }).catch(() => {});
   },
 
   updateSupplier: (id, updates) => {
@@ -369,11 +415,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       suppliers: s.suppliers.map((sup) => (sup.id === id ? { ...sup, ...updates } : sup)),
     }));
     get().addAuditLog("UPDATE", "Supplier", id, `Updated supplier`);
+
+    fetch(`/api/suppliers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    }).catch(() => {});
   },
 
   deleteSupplier: (id) => {
     set((s) => ({ suppliers: s.suppliers.filter((sup) => sup.id !== id) }));
     get().addAuditLog("DELETE", "Supplier", id, `Deleted supplier`);
+
+    fetch(`/api/suppliers/${id}`, { method: "DELETE" }).catch(() => {});
   },
 
   // ─── Items / Stock ───
@@ -392,6 +446,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newItem: MockItem = { ...item, id: `ITM-${String(Date.now()).slice(-4)}` };
     set((s) => ({ stockItems: [...s.stockItems, newItem] }));
     get().addAuditLog("CREATE", "Item", newItem.id, `Created item ${newItem.name}`);
+
+    fetch("/api/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: newItem.name,
+        categoryId: newItem.categoryId,
+        unit: newItem.unit,
+        unitPrice: newItem.unitPrice,
+        minStockLevel: newItem.minStockLevel,
+        currentStock: newItem.currentStock,
+        iconKey: newItem.iconKey,
+      }),
+    }).then(async (res) => {
+      if (res.ok) {
+        const created = await res.json();
+        set((s) => ({
+          stockItems: s.stockItems.map((i) => (i.id === newItem.id ? { ...i, id: created.id } : i)),
+        }));
+      }
+    }).catch(() => {});
   },
 
   updateItem: (id, updates) => {
@@ -399,18 +474,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       stockItems: s.stockItems.map((i) => (i.id === id ? { ...i, ...updates } : i)),
     }));
     get().addAuditLog("UPDATE", "Item", id, `Updated item details`);
+
+    fetch(`/api/items/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    }).catch(() => {});
   },
 
   toggleItemActive: (id) => {
+    const target = get().stockItems.find((i) => i.id === id);
     set((s) => ({
       stockItems: s.stockItems.map((i) => (i.id === id ? { ...i, isActive: !i.isActive } : i)),
     }));
     get().addAuditLog("UPDATE", "Item", id, `Toggled active status`);
+
+    fetch(`/api/items/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive: !(target?.isActive ?? true) }),
+    }).catch(() => {});
   },
 
   deleteItem: (id) => {
     set((s) => ({ stockItems: s.stockItems.filter((i) => i.id !== id) }));
     get().addAuditLog("DELETE", "Item", id, `Deleted item`);
+
+    fetch(`/api/items/${id}`, { method: "DELETE" }).catch(() => {});
   },
 
   // ─── Requisitions ───
@@ -674,56 +764,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   grns: [],
   stockTransactions: initialStockTransactions,
 
-  submitGRN: ({ supplierId, supplierName, grnDate, invoiceNo, invoiceDate, deliveryChallan, deliveryDate, remarks, lines }) => {
-    const state = get();
-    const grnId = generateGrnId();
-    const actor = state.currentUser;
-    const totalValue = lines.reduce((s, l) => s + l.receivedQty * l.unitPrice, 0);
+  submitGRN: async ({ supplierId, supplierName, grnDate, invoiceNo, invoiceDate, deliveryChallan, deliveryDate, remarks, lines }) => {
+const grnId = generateGrnId();
 
-    // Increment stock for each line
-    lines.forEach((l) => {
-      state.adjustStock(l.itemId, l.receivedQty);
-    });
+const res = await fetch("/api/grns", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    id: grnId,
+    supplierId,
+    grnDate,
+    invoiceNo,
+    invoiceDate,
+    deliveryChallan,
+    deliveryDate,
+    remarks,
+    lines,
+  }),
+});
 
-    const grn: MockGRN = {
-      id: grnId,
-      supplierId,
-      supplierName,
-      grnDate,
-      invoiceNo,
-      invoiceDate,
-      deliveryChallan,
-      deliveryDate,
-      remarks,
-      totalValue,
-      lines,
-    };
+if (!res.ok) {
+  const err = await res.json().catch(() => null);
+  throw new Error(err?.error || "Failed to submit GRN");
+}
 
-    const newTransactions: MockStockTransaction[] = lines.map((l, idx) => ({
-      id: `st-grn-${grnId}-${idx}`,
-      type: "INWARD" as const,
-      itemId: l.itemId,
-      itemName: l.itemName,
-      quantity: l.receivedQty,
-      unitPrice: l.unitPrice,
-      referenceNo: grnId,
-      date: grnDate,
-      userId: actor.id,
-    }));
+// allow rehydration
+set({ isHydrated: false });
+await get().hydrateStore();
 
-    set((s) => ({
-      grns: [grn, ...s.grns],
-      stockTransactions: [...newTransactions, ...s.stockTransactions],
-    }));
-
-    get().addAuditLog(
-      "STOCK_INWARD",
-      "GRN",
-      grnId,
-      `Received ${lines.length} item(s) from ${supplierName}. Total value: ₹${totalValue.toFixed(2)}`
-    );
-
-    return grnId;
+return grnId;
   },
 
   // ─── Manual Stock Outward / Adjustment ───
@@ -882,4 +953,44 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.notifications,
       ],
     })),
+
+  // ─── DB Hydration ───
+  isHydrated: false,
+
+  hydrateStore: async () => {
+    // Only run on the client — this fetches from a Next.js API route
+    if (typeof window === "undefined") return;
+    // Avoid double-hydrating
+    if (get().isHydrated) return;
+
+    try {
+      const res = await fetch("/api/init");
+      if (!res.ok) {
+        // 503 = DB not configured; 401 = not logged in yet. Both are fine — just
+        // continue with mock data. Any other status is logged as a warning.
+        if (res.status !== 503 && res.status !== 401) {
+          console.warn("[hydrateStore] Unexpected status:", res.status);
+        }
+        return;
+      }
+
+      const data = await res.json();
+
+      set((s) => ({
+        isHydrated: true,
+        allUsers: data.allUsers ?? s.allUsers,
+        categories: data.categories ?? s.categories,
+        suppliers: data.suppliers ?? s.suppliers,
+        stockItems: data.stockItems ?? s.stockItems,
+        requisitions: data.requisitions ?? s.requisitions,
+        stockTransactions: data.stockTransactions ?? s.stockTransactions,
+        issuances: data.issuances ?? s.issuances,
+        auditLogs: data.auditLogs ?? s.auditLogs,
+        notifications: data.notifications ?? s.notifications,
+      }));
+    } catch (err) {
+      // Network error — silently continue with in-memory mock data
+      console.warn("[hydrateStore] Could not reach /api/init:", err);
+    }
+  },
 }));

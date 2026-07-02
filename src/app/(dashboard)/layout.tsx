@@ -13,7 +13,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { data: session, status } = useSession();
-  const { currentUser, setCurrentUser, allUsers } = useAppStore();
+  const { currentUser, setCurrentUser, setCurrentUserObject, allUsers, hydrateStore, isHydrated } = useAppStore();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
@@ -22,6 +22,15 @@ export default function DashboardLayout({
     s.notifications.filter((n) => !n.isRead).length
   );
 
+  // Hydrate the Zustand store from the database once per session,
+  // as soon as NextAuth confirms the user is authenticated.
+  useEffect(() => {
+    if (status === "authenticated" && !isHydrated) {
+      hydrateStore();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   // Sync the Zustand "currentUser" (drives all app data scoping) to whoever
   // actually authenticated via NextAuth, once per session.
   useEffect(() => {
@@ -29,12 +38,43 @@ export default function DashboardLayout({
       const matched = allUsers.find(
         (u) => u.email.toLowerCase() === session.user.email!.toLowerCase()
       );
-      if (matched && matched.id !== currentUser.id) {
-        setCurrentUser(matched.id);
+      if (matched) {
+        if (matched.id !== currentUser.id) {
+          setCurrentUser(matched.id);
+        }
+      } else {
+        // Fallback: Populate currentUser in Zustand directly from the database-backed NextAuth session
+        const sessionUser = session.user as {
+          id: string;
+          name?: string | null;
+          email?: string | null;
+          role: "ADMIN" | "USER" | "APPROVER" | "INVENTORY_MGR";
+          departmentId: string;
+          departmentName?: string;
+        };
+        const fallbackUser = {
+          id: sessionUser.id || `user-${Date.now()}`,
+          name: sessionUser.name || "User",
+          email: sessionUser.email || "",
+          role: sessionUser.role || "USER",
+          departmentId: sessionUser.departmentId || "",
+          departmentName: sessionUser.departmentName || "",
+          approverId: null,
+          isActive: true,
+          passwordHash: "",
+        };
+        // Add to allUsers so other components referencing allUsers don't break or exclude this user
+        const targetEmail = (sessionUser.email || "").toLowerCase();
+        if (!allUsers.some(u => u.email.toLowerCase() === targetEmail)) {
+          useAppStore.setState({ allUsers: [...allUsers, fallbackUser] });
+        }
+        if (currentUser.email.toLowerCase() !== targetEmail) {
+          setCurrentUserObject(fallbackUser);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.email]);
+  }, [session?.user?.email, allUsers]);
 
   if (status === "loading") {
     return (

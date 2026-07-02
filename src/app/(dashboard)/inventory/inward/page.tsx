@@ -140,8 +140,8 @@ export default function StockInwardPage() {
   const totalQuantity = validLines.reduce((s, l) => s + l.receivedQty, 0);
   const grandTotal = validLines.reduce((s, l) => s + l.receivedQty * l.unitPrice, 0);
 
-  const handleSubmit = () => {
-    const grnId = submitGRN({
+  const handleSubmit = async () => {
+    const grnId = await submitGRN({
       supplierId,
       supplierName: supplier?.name || "",
       grnDate,
