@@ -63,6 +63,7 @@ export async function GET() {
       include: {
         user: true,
         department: true,
+        approvedBy: true,
         items: {
           include: {
             item: {
@@ -88,7 +89,7 @@ export async function GET() {
       priority: r.priority,
       createdAt: r.createdAt.toISOString(),
       approvedById: r.approvedById || undefined,
-      approvedByName: r.approvedById ? "System/Approver" : undefined, // fallback
+      approvedByName: r.approvedBy?.name || undefined,
       approvedAt: r.approvedAt ? r.approvedAt.toISOString() : undefined,
       rejectedReason: r.rejectedReason || undefined,
       items: r.items.map((it) => ({
@@ -120,6 +121,7 @@ export async function GET() {
       referenceNo: t.referenceNo || "",
       date: t.date.toISOString().split("T")[0],
       userId: t.userId,
+      linkedRequisitionId: t.linkedRequisitionId || undefined,
     }));
 
     // 7. Fetch Issuances

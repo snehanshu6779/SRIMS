@@ -190,7 +190,7 @@ interface AppState {
     receivedBy: string;
     remarks: string;
     lines: { itemId: string; itemName: string; issuedQty: number; approvedQty: number; unitPrice: number }[];
-  }) => string; // returns issuance referenceNo
+  }) => Promise<string>; // returns issuance referenceNo
 
   // GRNs / Stock Inward
   grns: MockGRN[];
@@ -217,8 +217,8 @@ interface AppState {
     referenceNo: string;
     remarks?: string;
     linkedRequisitionId?: string;
-  }) => void;
-
+  }) => Promise<void>;
+  
   // In-progress drafts for the two-step wizards (Issue Items, Stock Inward).
   // These are session-only — they exist so a half-filled wizard survives
   // navigating away and back, but they are NOT persisted to a backend.
@@ -519,6 +519,36 @@ export const useAppStore = create<AppState>((set, get) => ({
         `Auto-approved (priority: ${result.priority}) per Auto-Approval Rules`
       );
     }
+
+    fetch("/api/requisitions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: req.id,
+        userId: req.userId,
+        departmentId: req.departmentId,
+        status: req.status,
+        purpose: req.purpose,
+        remarks: req.remarks,
+        requiredDate: req.requiredDate,
+        totalAmount: req.totalAmount,
+        priority: req.priority,
+        items: req.items.map((item) => ({
+          itemId: item.itemId,
+          requestedQty: item.requestedQty,
+          quantity: item.requestedQty,
+          unitPrice: item.unitPrice,
+        })),
+      }),
+    })
+      .then(async (res) => {
+        if (res.status === 503) return;
+        if (res.ok) {
+          set({ isHydrated: false });
+          await get().hydrateStore();
+        }
+      })
+      .catch(() => {});
   },
 
   updateRequisitionStatus: (reqId, status, opts) => {
@@ -567,6 +597,24 @@ export const useAppStore = create<AppState>((set, get) => ({
         `Auto-approved (priority: ${autoApprovedPriority}) per Auto-Approval Rules`
       );
     }
+
+    fetch(`/api/requisitions/${reqId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status,
+        approvedQty: opts?.approvedQty,
+        rejectedReason: opts?.rejectedReason,
+      }),
+    })
+      .then(async (res) => {
+        if (res.status === 503) return;
+        if (res.ok) {
+          set({ isHydrated: false });
+          await get().hydrateStore();
+        }
+      })
+      .catch(() => {});
   },
 
   updateRequisitionFull: (reqId, updates) => {
@@ -592,6 +640,33 @@ export const useAppStore = create<AppState>((set, get) => ({
         `Auto-approved (priority: ${merged.priority}) per Auto-Approval Rules`
       );
     }
+
+    fetch(`/api/requisitions/${reqId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: updates.status,
+        purpose: updates.purpose,
+        remarks: updates.remarks,
+        requiredDate: updates.requiredDate,
+        totalAmount: updates.totalAmount,
+        priority: updates.priority,
+        items: updates.items?.map((item) => ({
+          itemId: item.itemId,
+          requestedQty: item.requestedQty,
+          quantity: item.requestedQty,
+          unitPrice: item.unitPrice,
+        })),
+      }),
+    })
+      .then(async (res) => {
+        if (res.status === 503) return;
+        if (res.ok) {
+          set({ isHydrated: false });
+          await get().hydrateStore();
+        }
+      })
+      .catch(() => {});
   },
 
   deleteRequisition: (reqId) => {
@@ -599,6 +674,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       requisitions: state.requisitions.filter((r) => r.id !== reqId),
     }));
     get().addAuditLog("DELETE", "Requisition", reqId, "Deleted draft requisition");
+
+    fetch(`/api/requisitions/${reqId}`, { method: "DELETE" })
+      .then(async (res) => {
+        if (res.status === 503) return;
+        if (res.ok) {
+          set({ isHydrated: false });
+          await get().hydrateStore();
+        }
+      })
+      .catch(() => {});
   },
 
   // ─── Auto-Approval Rules ───
@@ -681,83 +766,102 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ─── Issuances ───
   issuances: [],
 
-  confirmIssuance: ({ requisitionId, issuedToId, issuedToName, receivedBy, remarks, lines }) => {
-    const state = get();
+  confirmIssuance: async ({ requisitionId, issuedToId, issuedToName, receivedBy, remarks, lines }) => {
     const referenceNo = generateIssuanceId();
-    const actor = state.currentUser;
 
-    // Determine overall status: Issued if every line fully issued, else Partial
-    const isFullyIssued = lines.every((l) => l.issuedQty >= l.approvedQty);
-
-    // Decrement stock for each issued line
-    lines.forEach((l) => {
-      if (l.issuedQty > 0) {
-        state.adjustStock(l.itemId, -l.issuedQty);
-      }
+    const res = await fetch("/api/issuances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: referenceNo,
+        requisitionId,
+        issuedToId,
+        receivedBy,
+        remarks,
+        lines,
+      }),
     });
 
-    // Record issuance
-    const issuance: MockIssuance = {
-      id: referenceNo,
-      requisitionId,
-      issuedById: actor.id,
-      issuedByName: actor.name,
-      issuedToId,
-      issuedToName,
-      receivedBy,
-      issueDate: new Date().toISOString(),
-      referenceNo,
-      remarks,
-      lines: lines.map((l) => ({
-        itemId: l.itemId,
-        itemName: l.itemName,
-        issuedQty: l.issuedQty,
-        unitPrice: l.unitPrice,
-      })),
-    };
+    if (res.status === 503) {
+      const state = get();
+      const actor = state.currentUser;
+      const isFullyIssued = lines.every((l) => l.issuedQty >= l.approvedQty);
 
-    // Add stock transactions (OUTWARD)
-    const newTransactions: MockStockTransaction[] = lines
-      .filter((l) => l.issuedQty > 0)
-      .map((l, idx) => ({
-        id: `st-iss-${referenceNo}-${idx}`,
-        type: "OUTWARD" as const,
-        itemId: l.itemId,
-        itemName: l.itemName,
-        quantity: l.issuedQty,
-        unitPrice: l.unitPrice,
+      lines.forEach((l) => {
+        if (l.issuedQty > 0) {
+          state.adjustStock(l.itemId, -l.issuedQty);
+        }
+      });
+
+      const issuance: MockIssuance = {
+        id: referenceNo,
+        requisitionId,
+        issuedById: actor.id,
+        issuedByName: actor.name,
+        issuedToId,
+        issuedToName,
+        receivedBy,
+        issueDate: new Date().toISOString(),
         referenceNo,
-        date: new Date().toISOString().split("T")[0],
-        userId: actor.id,
-        linkedRequisitionId: requisitionId,
+        remarks,
+        lines: lines.map((l) => ({
+          itemId: l.itemId,
+          itemName: l.itemName,
+          issuedQty: l.issuedQty,
+          unitPrice: l.unitPrice,
+        })),
+      };
+
+      const newTransactions: MockStockTransaction[] = lines
+        .filter((l) => l.issuedQty > 0)
+        .map((l, idx) => ({
+          id: `st-iss-${referenceNo}-${idx}`,
+          type: "OUTWARD" as const,
+          itemId: l.itemId,
+          itemName: l.itemName,
+          quantity: l.issuedQty,
+          unitPrice: l.unitPrice,
+          referenceNo,
+          date: new Date().toISOString().split("T")[0],
+          userId: actor.id,
+          linkedRequisitionId: requisitionId,
+        }));
+
+      set((s) => ({
+        issuances: [issuance, ...s.issuances],
+        stockTransactions: [...newTransactions, ...s.stockTransactions],
+        requisitions: s.requisitions.map((r) => {
+          if (r.id !== requisitionId) return r;
+          return {
+            ...r,
+            status: isFullyIssued ? "ISSUED" : "PARTIAL",
+            items: r.items.map((item) => {
+              const line = lines.find((l) => l.itemId === item.itemId);
+              return line ? { ...item, issuedQty: line.issuedQty } : item;
+            }),
+          };
+        }),
       }));
 
-    // Update requisition: issuedQty per line + overall status
-    set((s) => ({
-      issuances: [issuance, ...s.issuances],
-      stockTransactions: [...newTransactions, ...s.stockTransactions],
-      requisitions: s.requisitions.map((r) => {
-        if (r.id !== requisitionId) return r;
-        return {
-          ...r,
-          status: isFullyIssued ? "ISSUED" : "PARTIAL",
-          items: r.items.map((item) => {
-            const line = lines.find((l) => l.itemId === item.itemId);
-            return line ? { ...item, issuedQty: line.issuedQty } : item;
-          }),
-        };
-      }),
-    }));
+      get().addAuditLog(
+        isFullyIssued ? "ISSUE_COMPLETE" : "ISSUE_PARTIAL",
+        "Requisition",
+        requisitionId,
+        `Issued via ${referenceNo}. ${lines.length} line(s) processed.`
+      );
 
-    // Audit log
-    get().addAuditLog(
-      isFullyIssued ? "ISSUE_COMPLETE" : "ISSUE_PARTIAL",
-      "Requisition",
-      requisitionId,
-      `Issued via ${referenceNo}. ${lines.length} line(s) processed.`
-    );
+      return referenceNo;
+    }
 
-    return referenceNo;
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || "Failed to confirm issuance");
+    }
+
+    const data = await res.json();
+    set({ isHydrated: false });
+    await get().hydrateStore();
+    return data.referenceNo || referenceNo;
   },
 
   // ─── GRNs / Stock Inward ───
@@ -798,37 +902,61 @@ return grnId;
   },
 
   // ─── Manual Stock Outward / Adjustment ───
-  recordManualMovement: ({ type, itemId, itemName, quantity, unitPrice, referenceNo, remarks, linkedRequisitionId }) => {
-    const state = get();
-    const actor = state.currentUser;
+  recordManualMovement: async ({ type, itemId, itemName, quantity, unitPrice, referenceNo, remarks, linkedRequisitionId }) => {
+    console.log("REAL STORE FUNCTION FIRED");
+    const res = await fetch("/api/transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        itemId,
+        quantity,
+        unitPrice,
+        referenceNo,
+        remarks,
+        linkedRequisitionId,
+      }),
+    });
 
-    // OUTWARD always decrements; ADJUSTMENT applies signed delta directly
-    const delta = type === "OUTWARD" ? -Math.abs(quantity) : quantity;
-    state.adjustStock(itemId, delta);
+    if (res.status === 503) {
+      const state = get();
+      const actor = state.currentUser;
+      const delta = type === "OUTWARD" ? -Math.abs(quantity) : quantity;
+      state.adjustStock(itemId, delta);
 
-    const newTransaction: MockStockTransaction = {
-      id: `st-manual-${Date.now()}`,
-      type,
-      itemId,
-      itemName,
-      quantity: type === "OUTWARD" ? Math.abs(quantity) : quantity,
-      unitPrice,
-      referenceNo,
-      date: new Date().toISOString().split("T")[0],
-      userId: actor.id,
-      linkedRequisitionId,
-    };
+      const newTransaction: MockStockTransaction = {
+        id: `st-manual-${Date.now()}`,
+        type,
+        itemId,
+        itemName,
+        quantity: type === "OUTWARD" ? Math.abs(quantity) : quantity,
+        unitPrice,
+        referenceNo,
+        date: new Date().toISOString().split("T")[0],
+        userId: actor.id,
+        linkedRequisitionId,
+      };
 
-    set((s) => ({
-      stockTransactions: [newTransaction, ...s.stockTransactions],
-    }));
+      set((s) => ({
+        stockTransactions: [newTransaction, ...s.stockTransactions],
+      }));
 
-    get().addAuditLog(
-      type === "OUTWARD" ? "STOCK_OUTWARD" : "STOCK_ADJUSTMENT",
-      "Item",
-      itemId,
-      `${type === "OUTWARD" ? "Issued" : "Adjusted"} ${itemName} by ${quantity > 0 ? "+" : ""}${quantity}. Ref: ${referenceNo}${remarks ? ` — ${remarks}` : ""}`
-    );
+      get().addAuditLog(
+        type === "OUTWARD" ? "STOCK_OUTWARD" : "STOCK_ADJUSTMENT",
+        "Item",
+        itemId,
+        `${type === "OUTWARD" ? "Issued" : "Adjusted"} ${itemName} by ${quantity > 0 ? "+" : ""}${quantity}. Ref: ${referenceNo}${remarks ? ` — ${remarks}` : ""}`
+      );
+      return;
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || "Failed to record stock movement");
+    }
+
+    set({ isHydrated: false });
+    await get().hydrateStore();
   },
 
   // ─── Issue Items wizard drafts (per-requisition, session-only) ───

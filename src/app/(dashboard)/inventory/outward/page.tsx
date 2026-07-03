@@ -21,6 +21,8 @@ export default function StockOutwardPage() {
   const [linkedRequisitionId, setLinkedRequisitionId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewingRequisition, setViewingRequisition] = useState<MockRequisition | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   // Deep-link support: /inventory/outward?item=ITM-0001 (used by Stock Overview's kebab menu)
   useEffect(() => {
@@ -55,24 +57,44 @@ export default function StockOutwardPage() {
     );
   }, [outwardHistory, searchQuery]);
 
-  const handleSubmit = () => {
-    if (!selectedItem || quantity <= 0) return;
-    recordManualMovement({
-      type: "OUTWARD",
-      itemId: selectedItem.id,
-      itemName: selectedItem.name,
-      quantity,
-      unitPrice: selectedItem.unitPrice,
-      referenceNo: referenceNo || `OUT-${Date.now().toString().slice(-6)}`,
-      remarks: reason,
-      linkedRequisitionId: linkedRequisitionId || undefined,
-    });
-    setShowForm(false);
-    setItemId("");
-    setQuantity(1);
-    setReason("");
-    setReferenceNo("");
-    setLinkedRequisitionId("");
+  const handleSubmit = async () => {
+    console.log("HANDLE SUBMIT FIRED");
+console.log("selectedItem =", selectedItem);
+console.log("quantity =", quantity);
+    if (!selectedItem) {
+  alert("No item selected or item not found");
+  console.log("selectedItem missing");
+  return;
+}
+
+if (quantity <= 0) {
+  alert("Invalid quantity");
+  return;
+}
+    setIsSubmitting(true);
+    setSubmitError("");
+    try {
+      await recordManualMovement({
+        type: "OUTWARD",
+        itemId: selectedItem.id,
+        itemName: selectedItem.name,
+        quantity,
+        unitPrice: selectedItem.unitPrice,
+        referenceNo: referenceNo || `OUT-${Date.now().toString().slice(-6)}`,
+        remarks: reason,
+        linkedRequisitionId: linkedRequisitionId || undefined,
+      });
+      setShowForm(false);
+      setItemId("");
+      setQuantity(1);
+      setReason("");
+      setReferenceNo("");
+      setLinkedRequisitionId("");
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to record outward movement");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -164,6 +186,9 @@ export default function StockOutwardPage() {
           {selectedItem && quantity > selectedItem.currentStock && (
             <p className="mt-2 text-[12px] text-red-600">Quantity exceeds available stock ({selectedItem.currentStock})</p>
           )}
+          {submitError && (
+            <p className="mt-2 text-[12px] text-red-600">{submitError}</p>
+          )}
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => setShowForm(false)}
@@ -173,10 +198,10 @@ export default function StockOutwardPage() {
             </button>
             <button
               onClick={handleSubmit}
-              disabled={!itemId || quantity <= 0 || (selectedItem ? quantity > selectedItem.currentStock : false)}
+              disabled={!itemId || quantity <= 0 || isSubmitting || (selectedItem ? quantity > selectedItem.currentStock : false)}
               className="rounded-button bg-brand-primary px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-primary-hover disabled:opacity-40"
             >
-              Record Outward
+              {isSubmitting ? "Recording..." : "Record Outward"}
             </button>
           </div>
         </div>

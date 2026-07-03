@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
       unitPrice,
       referenceNo,
       remarks,
+      linkedRequisitionId,
     } = body;
 
     if (!type || !itemId || quantity === undefined) {
@@ -48,18 +49,20 @@ export async function POST(req: NextRequest) {
         data: {
           type: type as StockTransactionType,
           itemId,
-          quantity,
+          quantity: type === "OUTWARD" ? Math.abs(quantity) : quantity,
           unitPrice: unitPrice || 0,
           referenceNo: referenceNo || null,
           referenceType: "MANUAL",
+          linkedRequisitionId: linkedRequisitionId || null,
           userId: session.user.id,
         },
       });
 
       // 3. Log Audit Trail
       const action = type === "OUTWARD" ? "STOCK_OUTWARD" : "STOCK_ADJUSTMENT";
-      const details = `${type === "OUTWARD" ? "Issued" : "Adjusted"} ${updatedItem.name} by ${quantity > 0 ? "+" : ""}${quantity}. Ref: ${referenceNo || "None"}${remarks ? ` — ${remarks}` : ""}`;
-      
+      const requisitionNote = linkedRequisitionId ? ` Requisition: ${linkedRequisitionId}.` : "";
+      const details = `${type === "OUTWARD" ? "Issued" : "Adjusted"} ${updatedItem.name} by ${quantity > 0 ? "+" : ""}${quantity}. Ref: ${referenceNo || "None"}${requisitionNote}${remarks ? ` — ${remarks}` : ""}`;
+
       await tx.auditLog.create({
         data: {
           actorId: session.user.id,
@@ -69,12 +72,6 @@ export async function POST(req: NextRequest) {
           after: details,
         },
       });
-
-      // If there's a linked requisition, update the requisition reference if needed
-      // (For write-offs/corrections that still trace back to a specific requisition).
-      // Since schema doesn't have explicit foreign key link in StockTransaction for linkedRequisitionId,
-      // we can save this info in the referenceNo or details column if it's there.
-      // Looking at schema.prisma: `StockTransaction` doesn't have a linkedRequisitionId column, so we save it in audit details/reference.
 
       return txn;
     });

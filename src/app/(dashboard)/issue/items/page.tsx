@@ -50,6 +50,8 @@ export default function IssueItemsPage() {
   const [remarks, setRemarks] = useState("");
   const [referenceNo] = useState(() => `ISS-2025-${String(Math.floor(Math.random() * 900) + 100).padStart(5, "0")}`);
   const [completedRef, setCompletedRef] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const approvedReqs = requisitions
     .filter((r) => r.status === "APPROVED")
@@ -104,26 +106,34 @@ export default function IssueItemsPage() {
   const partialIssueCount = issueLines.filter((l) => l.issueQty > 0 && l.issueQty < l.approvedQty).length;
   const totalAmount = issueLines.reduce((s, l) => s + l.issueQty * l.unitPrice, 0);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!selectedReq) return;
     const issuedToUser = allUsers.find((u) => u.id === issuedToId);
-    const ref = confirmIssuance({
-      requisitionId: selectedReq.id,
-      issuedToId,
-      issuedToName: issuedToUser?.name || receivedBy,
-      receivedBy,
-      remarks,
-      lines: issueLines.map((l) => ({
-        itemId: l.itemId,
-        itemName: l.itemName,
-        issuedQty: l.issueQty,
-        approvedQty: l.approvedQty,
-        unitPrice: l.unitPrice,
-      })),
-    });
-    setCompletedRef(ref);
-    clearIssueDraft(selectedReq.id);
-    setCurrentStep(3);
+    setIsSubmitting(true);
+    setSubmitError("");
+    try {
+      const ref = await confirmIssuance({
+        requisitionId: selectedReq.id,
+        issuedToId,
+        issuedToName: issuedToUser?.name || receivedBy,
+        receivedBy,
+        remarks,
+        lines: issueLines.map((l) => ({
+          itemId: l.itemId,
+          itemName: l.itemName,
+          issuedQty: l.issueQty,
+          approvedQty: l.approvedQty,
+          unitPrice: l.unitPrice,
+        })),
+      });
+      setCompletedRef(ref);
+      clearIssueDraft(selectedReq.id);
+      setCurrentStep(3);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to confirm issuance");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDone = () => {
@@ -394,12 +404,16 @@ export default function IssueItemsPage() {
 
                 {/* Actions */}
                 <div className="mt-5 flex flex-col gap-2">
+                  {submitError && (
+                    <p className="text-[12px] text-red-600">{submitError}</p>
+                  )}
                   <button
                     onClick={handleConfirm}
-                    className="flex items-center justify-center gap-2 rounded-button bg-brand-primary py-2.5 text-[14px] font-semibold text-white hover:bg-brand-primary-hover"
+                    disabled={isSubmitting}
+                    className="flex items-center justify-center gap-2 rounded-button bg-brand-primary py-2.5 text-[14px] font-semibold text-white hover:bg-brand-primary-hover disabled:opacity-40"
                   >
                     <CheckCircle2 size={16} />
-                    Confirm & Complete
+                    {isSubmitting ? "Processing..." : "Confirm & Complete"}
                   </button>
                   <div className="flex gap-2">
                     <button

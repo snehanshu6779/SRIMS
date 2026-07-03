@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
               unitPrice: line.unitPrice,
               referenceNo: id,
               referenceType: "ISSUANCE",
+              linkedRequisitionId: requisitionId,
               userId: session.user.id,
             },
           });

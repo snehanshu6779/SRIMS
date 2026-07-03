@@ -115,9 +115,10 @@ model Requisition {
   approvedById   String?
   approvedAt     DateTime?
   rejectedReason String?           @db.Text
-  issuances      Issuance[]
-  items          RequisitionItem[]
-  approvedBy     User?             @relation("ApproverRequisitions", fields: [approvedById], references: [id])
+  issuances           Issuance[]
+  items               RequisitionItem[]
+  linkedTransactions  StockTransaction[]
+  approvedBy          User?             @relation("ApproverRequisitions", fields: [approvedById], references: [id])
   department     Department        @relation(fields: [departmentId], references: [id])
   user           User              @relation("RequesterRequisitions", fields: [userId], references: [id])
 
@@ -165,21 +166,24 @@ model Issuance {
 }
 
 model StockTransaction {
-  id            String               @id @default(cuid())
-  type          StockTransactionType
-  itemId        String
-  quantity      Int
-  unitPrice     Float                @default(0)
-  referenceNo   String?
-  referenceType String?
-  date          DateTime             @default(now())
-  userId        String
-  item          Item                 @relation(fields: [itemId], references: [id])
-  user          User                 @relation(fields: [userId], references: [id])
+  id                  String               @id @default(cuid())
+  type                StockTransactionType
+  itemId              String
+  quantity            Int
+  unitPrice           Float                @default(0)
+  referenceNo         String?
+  referenceType       String?
+  linkedRequisitionId String?
+  date                DateTime             @default(now())
+  userId              String
+  item                Item                 @relation(fields: [itemId], references: [id])
+  user                User                 @relation(fields: [userId], references: [id])
+  linkedRequisition   Requisition?         @relation(fields: [linkedRequisitionId], references: [id])
 
   @@index([itemId])
   @@index([type])
   @@index([date])
+  @@index([linkedRequisitionId], map: "stock_transactions_linkedRequisitionId_fkey")
   @@index([userId], map: "stock_transactions_userId_fkey")
   @@map("stock_transactions")
 }
