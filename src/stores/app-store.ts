@@ -877,16 +877,17 @@ const res = await fetch("/api/grns", {
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
-    id: grnId,
-    supplierId,
-    grnDate,
-    invoiceNo,
-    invoiceDate,
-    deliveryChallan,
-    deliveryDate,
-    remarks,
-    lines,
-  }),
+  id: grnId,
+  supplierId,
+  supplierName,
+  grnDate,
+  invoiceNo,
+  invoiceDate,
+  deliveryChallan,
+  deliveryDate,
+  remarks,
+  lines,
+}),
 });
 
 if (!res.ok) {
