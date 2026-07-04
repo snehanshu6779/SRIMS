@@ -76,7 +76,11 @@ async function verifyCredentials(email: string, password: string) {
 }
 
 export const authOptions: NextAuthOptions = {
-  session: { strategy: "jwt" },
+  secret: process.env.NEXTAUTH_SECRET,
+
+  session: {
+    strategy: "jwt",
+  },
   pages: {
     signIn: "/login",
   },

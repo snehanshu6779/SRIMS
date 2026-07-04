@@ -2,17 +2,27 @@ import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 
 export default withAuth(
-  function middleware() {
+  function middleware(req) {
+    console.log("[MIDDLEWARE] TOKEN:", req.nextauth.token);
+
     return NextResponse.next();
   },
   {
+    secret: process.env.NEXTAUTH_SECRET,
+
+    callbacks: {
+      authorized: ({ token }) => {
+        console.log("[MIDDLEWARE] AUTHORIZED:", token);
+        return !!token;
+      },
+    },
+
     pages: {
       signIn: "/login",
     },
   }
 );
 
-// Protect every route except /login, NextAuth's own API routes, and static assets.
 export const config = {
   matcher: [
     "/dashboard/:path*",
